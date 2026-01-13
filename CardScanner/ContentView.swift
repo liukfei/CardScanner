@@ -1,24 +1,29 @@
-//
-//  ContentView.swift
-//  CardScanner
-//
-//  Created by EdwardLiu on 2025/12/31.
-//
-
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var scannerService = CardScannerService()
+    @State private var selectedTab = 0
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        TabView(selection: $selectedTab) {
+            CameraScannerView(scannerService: scannerService)
+                .tabItem {
+                    Label("Scan", systemImage: "camera.viewfinder")
+                }
+                .tag(0)
+            
+            CardFeedView(scannerService: scannerService)
+                .tabItem {
+                    Label("My Cards", systemImage: "rectangle.stack")
+                }
+                .tag(1)
         }
-        .padding()
     }
 }
 
-#Preview {
-    ContentView()
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+    }
 }
+
