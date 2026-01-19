@@ -4,6 +4,7 @@ import UIKit
 import Combine
 import CoreVideo
 import CoreImage
+import Vision
 
 struct CameraScannerView: View {
     @ObservedObject var scannerService: CardScannerService
@@ -18,8 +19,16 @@ struct CameraScannerView: View {
         ZStack {
             // Camera preview
             if cameraManager.isSessionRunning {
-                CameraPreview(session: cameraManager.session)
-                    .ignoresSafeArea()
+                ZStack {
+                    CameraPreview(session: cameraManager.session)
+                        .ignoresSafeArea()
+                    
+                    // Card scan frame with detected rectangles
+                    if isScanningModeOn {
+                        CardScanFrameView(detectedRectangles: scanningState.detectedRectangles)
+                            .ignoresSafeArea()
+                    }
+                }
             } else {
                 Color.black
                     .ignoresSafeArea()
@@ -149,13 +158,32 @@ struct CameraScannerView: View {
     }
     
     private func setupScanningCallback() {
+        let cardDetectionService = CardDetectionService.shared
+        
         cameraManager.onFrameCaptured = { [scannerService, scanningState] image in
-            // Process the captured frame
-            scannerService.scanImage(image) { card in
+            // Get actual image size for coordinate conversion
+            let imageSize = CGSize(width: image.size.width * image.scale, 
+                                  height: image.size.height * image.scale)
+            
+            // First, detect rectangles and check for cards
+            cardDetectionService.detectRectanglesAndCards(in: image, imageSize: imageSize) { rectangles, hasCard in
                 DispatchQueue.main.async {
-                    if let card = card {
-                        scanningState.scannedCard = card
-                        scanningState.shouldShowAlert = true
+                    // Update detected rectangles for overlay
+                    // We need to update via a binding or state object
+                    // Since we can't directly modify @State from a closure, 
+                    // we'll use scanningState to hold rectangles
+                    scanningState.detectedRectangles = rectangles
+                }
+                
+                // If card detected in rectangle, process the image
+                if hasCard {
+                    scannerService.scanImage(image) { card in
+                        DispatchQueue.main.async {
+                            if let card = card {
+                                scanningState.scannedCard = card
+                                scanningState.shouldShowAlert = true
+                            }
+                        }
                     }
                 }
             }
@@ -167,6 +195,7 @@ struct CameraScannerView: View {
 class ScanningState: ObservableObject {
     @Published var scannedCard: Card?
     @Published var shouldShowAlert: Bool = false
+    @Published var detectedRectangles: [DetectedRectangle] = []
 }
 
 class CameraManager: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {

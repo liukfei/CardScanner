@@ -24,7 +24,7 @@ class MockAPIService {
     private init() {}
     
     func isCard(image: UIImage) -> Bool {
-        return Int.random(in: 1...10) == 1
+        return true
     }
     
     func getCardMetadata(image: UIImage) -> (playerName: String, year: Int, team: String) {
