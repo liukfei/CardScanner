@@ -4,6 +4,7 @@ struct CardScanFrameView: View {
     var detectedRectangles: [DetectedRectangle] = []
     @State private var viewSize: CGSize = .zero
     @State private var scanFrameRect: CGRect = .zero
+    var onScanFrameUpdate: ((CGRect, CGSize) -> Void)? = nil
     
     // Card dimensions - standard sports card size
     // Sports cards are typically 2.5" x 3.5" (portrait orientation: width < height)
@@ -87,6 +88,7 @@ struct CardScanFrameView: View {
                     width: frameWidth,
                     height: frameHeight
                 )
+                onScanFrameUpdate?(scanFrameRect, viewSize)
             }
             .onChange(of: geometry.size) { newSize in
                 let frameWidth = min(newSize.width * 0.75, 280)
@@ -98,6 +100,7 @@ struct CardScanFrameView: View {
                     width: frameWidth,
                     height: frameHeight
                 )
+                onScanFrameUpdate?(scanFrameRect, viewSize)
             }
     }
     }

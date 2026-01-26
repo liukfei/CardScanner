@@ -7,12 +7,17 @@ class CardScannerService: ObservableObject {
     @Published var cards: [Card] = []
     @Published var isScanning: Bool = false
     @Published var scanProgress: Double = 0.0
+    @Published var isPaused: Bool = false
     
     private let mockAPIService = MockAPIService.shared
     private var cancellables = Set<AnyCancellable>()
     
     // Store processed image identifiers to avoid duplicates
     private var processedImageIdentifiers = Set<String>()
+    
+    // Control flags for scan cancellation
+    private var shouldCancelScan = false
+    private var currentProcessBatch: ((Int) -> Void)?
     
     init() {
         loadCards()
@@ -23,7 +28,9 @@ class CardScannerService: ObservableObject {
         guard !isScanning else { return }
         
         isScanning = true
+        isPaused = false
         scanProgress = 0.0
+        shouldCancelScan = false
         
         // Request photo library access
         let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -43,6 +50,28 @@ class CardScannerService: ObservableObject {
         } else {
             isScanning = false
         }
+    }
+    
+    /// Pause the current scan
+    func pauseScan() {
+        guard isScanning else { return }
+        isPaused = true
+    }
+    
+    /// Resume a paused scan
+    func resumeScan() {
+        guard isScanning && isPaused else { return }
+        isPaused = false
+        // Continue processing will happen automatically in processBatch
+    }
+    
+    /// Cancel the current scan
+    func cancelScan() {
+        shouldCancelScan = true
+        isPaused = false
+        isScanning = false
+        scanProgress = 0.0
+        currentProcessBatch = nil
     }
         
     private func processImage(_ asset: PHAsset) {
@@ -115,9 +144,43 @@ class CardScannerService: ObservableObject {
         processBatch = { [weak self] (startIndex: Int) in
             guard let self = self else { return }
             
+            // Check if scan was cancelled
+            if self.shouldCancelScan {
+                DispatchQueue.main.async {
+                    self.isScanning = false
+                    self.scanProgress = 0.0
+                }
+                return
+            }
+            
+            // Check if scan is paused - wait and retry
+            if self.isPaused {
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.3) {
+                    processBatch?(startIndex)  // Retry from same position
+                }
+                return
+            }
+            
             let endIndex = min(startIndex + batchSize, totalCount)
             
             for i in startIndex..<endIndex {
+                // Check for cancellation during processing
+                if self.shouldCancelScan {
+                    DispatchQueue.main.async {
+                        self.isScanning = false
+                        self.scanProgress = 0.0
+                    }
+                    return
+                }
+                
+                // Check if paused - if so, wait and retry this batch
+                if self.isPaused {
+                    DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.3) {
+                        processBatch?(startIndex)  // Retry from start of current batch
+                    }
+                    return
+                }
+                
                 let asset = assets.object(at: i)
                 self.processImage(asset)
                 processedCount += 1
@@ -128,17 +191,21 @@ class CardScannerService: ObservableObject {
             }
             
             // Continue with next batch
-            if endIndex < totalCount {
+            if endIndex < totalCount && !self.shouldCancelScan {
                 DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.1) {
                     processBatch?(endIndex)
                 }
             } else {
                 DispatchQueue.main.async {
                     self.isScanning = false
-                    self.scanProgress = 1.0
+                    self.scanProgress = self.shouldCancelScan ? 0.0 : 1.0
+                    self.shouldCancelScan = false
                 }
             }
         }
+        
+        // Store reference to processBatch for cancellation
+        currentProcessBatch = processBatch
         
         // Start processing
         DispatchQueue.global(qos: .userInitiated).async {
@@ -172,6 +239,11 @@ class CardScannerService: ObservableObject {
     
     /// Scan a single image captured from camera
     func scanImage(_ image: UIImage, completion: @escaping (Card?) -> Void) {
+        scanImage(image, withCardInfo: nil, completion: completion)
+    }
+    
+    /// Scan a single image captured from camera with optional OCR-extracted card info
+    func scanImage(_ image: UIImage, withCardInfo cardInfo: CardDetectionService.CardInfo?, completion: @escaping (Card?) -> Void) {
         guard !isScanning else {
             completion(nil)
             return
@@ -200,8 +272,18 @@ class CardScannerService: ObservableObject {
             
             // Check if image is a card using mock API
             if self.mockAPIService.isCard(image: image) {
-                // Get card metadata
-                let metadata = self.mockAPIService.getCardMetadata(image: image)
+                // Get card metadata - prefer OCR-extracted info if available
+                let metadata: (playerName: String, year: Int, team: String)
+                if let cardInfo = cardInfo {
+                    let mockMetadata = self.mockAPIService.getCardMetadata(image: image)
+                    metadata = (
+                        playerName: cardInfo.playerName ?? mockMetadata.playerName,
+                        year: cardInfo.year ?? mockMetadata.year,
+                        team: cardInfo.team ?? mockMetadata.team
+                    )
+                } else {
+                    metadata = self.mockAPIService.getCardMetadata(image: image)
+                }
                 
                 // Create card object
                 let card = Card(

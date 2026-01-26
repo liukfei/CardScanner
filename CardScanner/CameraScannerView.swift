@@ -14,6 +14,9 @@ struct CameraScannerView: View {
     @State private var scannedCard: Card?
     @State private var showingSuccessAlert = false
     @State private var isScanningModeOn = false
+    @State private var scanFrameRect: CGRect? = nil
+    @State private var scanViewSize: CGSize? = nil
+    @State private var useYOLODetection = false  // Toggle between Vision rectangle detection and YOLO
     
     var body: some View {
         ZStack {
@@ -25,8 +28,14 @@ struct CameraScannerView: View {
                     
                     // Card scan frame with detected rectangles
                     if isScanningModeOn {
-                        CardScanFrameView(detectedRectangles: scanningState.detectedRectangles)
-                            .ignoresSafeArea()
+                        CardScanFrameView(
+                            detectedRectangles: scanningState.detectedRectangles,
+                            onScanFrameUpdate: { rect, size in
+                                scanFrameRect = rect
+                                scanViewSize = size
+                            }
+                        )
+                        .ignoresSafeArea()
                     }
                 }
             } else {
@@ -46,21 +55,6 @@ struct CameraScannerView: View {
                     
                     // Bottom controls
                     VStack(spacing: 20) {
-                        // Scanning indicator (continuous scanning mode)
-                        if scannerService.isScanning {
-                            HStack {
-                                Spacer()
-                                VStack(spacing: 8) {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    Text("Scanning...")
-                                        .foregroundColor(.white)
-                                        .font(.caption)
-                                }
-                                Spacer()
-                            }
-                        }
-                        
                         // Scan mode toggle button
                         HStack {
                             Spacer()
@@ -159,29 +153,61 @@ struct CameraScannerView: View {
     
     private func setupScanningCallback() {
         let cardDetectionService = CardDetectionService.shared
+        let yoloDetector = YOLOCardDetector.shared
         
-        cameraManager.onFrameCaptured = { [scannerService, scanningState] image in
+        cameraManager.onFrameCaptured = { [scannerService, scanningState, useYOLODetection] image in
             // Get actual image size for coordinate conversion
             let imageSize = CGSize(width: image.size.width * image.scale, 
                                   height: image.size.height * image.scale)
             
-            // First, detect rectangles and check for cards
-            cardDetectionService.detectRectanglesAndCards(in: image, imageSize: imageSize) { rectangles, hasCard in
-                DispatchQueue.main.async {
-                    // Update detected rectangles for overlay
-                    // We need to update via a binding or state object
-                    // Since we can't directly modify @State from a closure, 
-                    // we'll use scanningState to hold rectangles
-                    scanningState.detectedRectangles = rectangles
+            // Choose detection method: YOLO or Vision rectangle detection
+            if useYOLODetection && yoloDetector.isModelLoaded {
+                // Use YOLO model for card detection
+                yoloDetector.detectCards(in: image) { yoloDetections, cardInfo in
+                    // Convert YOLO detections to DetectedRectangle format
+                    let rectangles = yoloDetections.map { detection in
+                        detection.toDetectedRectangle(imageSize: imageSize, viewSize: isScanningModeOn ? scanViewSize : nil)
+                    }
+                    
+                    DispatchQueue.main.async {
+                        scanningState.detectedRectangles = rectangles
+                    }
+                    
+                    // If card detected, process the image with OCR-extracted info
+                    if let cardInfo = cardInfo {
+                        scannerService.scanImage(image, withCardInfo: cardInfo) { card in
+                            DispatchQueue.main.async {
+                                if let card = card {
+                                    scanningState.scannedCard = card
+                                    scanningState.shouldShowAlert = true
+                                }
+                            }
+                        }
+                    }
                 }
-                
-                // If card detected in rectangle, process the image
-                if hasCard {
-                    scannerService.scanImage(image) { card in
-                        DispatchQueue.main.async {
-                            if let card = card {
-                                scanningState.scannedCard = card
-                                scanningState.shouldShowAlert = true
+            } else {
+                // Use Vision rectangle detection (default)
+                cardDetectionService.detectRectanglesAndCards(
+                    in: image,
+                    imageSize: imageSize,
+                    scanFrameRect: isScanningModeOn ? scanFrameRect : nil,
+                    viewSize: isScanningModeOn ? scanViewSize : nil
+                ) { rectangles, cardInfo in
+                    DispatchQueue.main.async {
+                        // Update detected rectangles for overlay
+                        scanningState.detectedRectangles = rectangles
+                    }
+                    
+                    // If card detected in rectangle, process the image with OCR-extracted info
+                    if let cardInfo = cardInfo {
+                        // Use scannerService.scanImage which handles the card creation and storage
+                        // But we'll pass the OCR-extracted info if available
+                        scannerService.scanImage(image, withCardInfo: cardInfo) { card in
+                            DispatchQueue.main.async {
+                                if let card = card {
+                                    scanningState.scannedCard = card
+                                    scanningState.shouldShowAlert = true
+                                }
                             }
                         }
                     }

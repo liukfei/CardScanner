@@ -19,13 +19,66 @@ struct CardFeedView: View {
                 if scannerService.isScanning {
                     VStack(spacing: 8) {
                         HStack {
-                            Text("Scanning photo library...")
+                            Text(scannerService.isPaused ? "Scanning paused..." : "Scanning photo library...")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                             Spacer()
                             Text("\(Int(scannerService.scanProgress * 100))%")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal)
+                        
+                        // Control buttons
+                        HStack(spacing: 16) {
+                            if scannerService.isPaused {
+                                Button(action: {
+                                    scannerService.resumeScan()
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "play.fill")
+                                        Text("Resume")
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color.blue)
+                                    .cornerRadius(8)
+                                }
+                            } else {
+                                Button(action: {
+                                    scannerService.pauseScan()
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "pause.fill")
+                                        Text("Pause")
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color.orange)
+                                    .cornerRadius(8)
+                                }
+                            }
+                            
+                            Button(action: {
+                                scannerService.cancelScan()
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "xmark.circle.fill")
+                                    Text("Cancel")
+                                }
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color.red)
+                                .cornerRadius(8)
+                            }
+                            
+                            Spacer()
                         }
                         .padding(.horizontal)
                         
